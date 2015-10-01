@@ -20,12 +20,16 @@
 #include <errno.h>
 #include <assert.h>
 #include <signal.h>
+#include <arpa/inet.h>
+#include <time.h>
 
 #define SP ' '
 #define HT '\t'
 #define CR '\r'
 #define LF '\n'
 #define CRLF "\r\n"
+
+#define LOGFILE "proxy.log"
 
 #define DEFAULT_PORT "80"
 #define DEFAULT_ABS_PATH "/"
@@ -34,10 +38,7 @@
 
 /*
  * TODO:
- * - Modify connection_readline to end up with CRLF
  * - Logging
- * - Request forwarding
- * - Response forwarding
  * - Split into multiple files
  */
 
@@ -49,7 +50,12 @@ struct listener;
 struct connection;
 struct httpuri;
 
-static struct listener *listener_new();
+static struct logger *logger_new(const char *filename);
+static void logger_del(struct logger *logger);
+static int logger_init(struct logger *logger, const char *filename);
+static void logger_log(struct logger *logger, struct connection *conn, struct httpuri *httpuri, size_t size);
+
+static struct listener *listener_new(void);
 static void listener_del(struct listener *listener);
 static void listener_init(struct listener *listener);
 static void listener_set_backlog(struct listener *listener, int backlog);
@@ -78,6 +84,11 @@ static struct httpuri *httpuri_uri_to_httpuri(const char *uri);
 static int is_valid_method(const char *method);
 static int is_valid_version(const char *version);
 
+struct logger {
+    char *filename;
+    FILE *file;
+};
+
 struct listener {
     int sock;
     int backlog;
@@ -88,7 +99,7 @@ struct connection {
     uint8_t rbuffer[CONN_BUF_LEN];
     uint32_t rstart;
     uint32_t rlen;
-    struct sockaddr addr;
+    struct sockaddr_storage addr;
     socklen_t addrlen;
 };
 
@@ -100,11 +111,13 @@ struct httpuri {
 
 int main(int argc, char *argv[])
 {
+    int result;
     const char *port;
     long port_num;
-    struct listener *listener;
+    struct listener *listener = NULL;
     struct connection *conn_from_client = NULL;
     struct connection *conn_to_server = NULL;
+    struct logger *logger = NULL;
     struct sigaction action;
 
     if (argc < 2) {
@@ -125,22 +138,26 @@ int main(int argc, char *argv[])
     sigemptyset(&action.sa_mask);
     sigaction(SIGPIPE, &action, NULL);
 
+    logger = logger_new(LOGFILE);
+    if (logger == NULL) {
+        fprintf(stderr, "cannot create logger\n");
+        goto fail;
+    }
+
     listener = listener_new();
     if (listener == NULL) {
         fprintf(stderr, "Not enough memory\n");
-        exit(EXIT_FAILURE);
+        goto fail;
     }
 
     if (listener_open_and_bind(listener, port)) {
         fprintf(stderr, "failed to open or bind\n");
-        listener_del(listener);
-        exit(EXIT_FAILURE);
+        goto fail;
     }
 
     if (listener_listen(listener)) {
         fprintf(stderr, "failed to listen\n");
-        listener_del(listener);
-        exit(EXIT_FAILURE);
+        goto fail;
     }
 
     while ((conn_from_client = listener_accept(listener)) != NULL) {
@@ -150,11 +167,14 @@ int main(int argc, char *argv[])
         char uri[512];
         char version[16];
         char line[512];
+        char addr[NI_MAXHOST];
         uint32_t content_length;
         int host_header_found = 0;
         const char *header_end;
         size_t header_len;
         int do_not_forward;
+        struct httpuri *httpuri = NULL;
+        size_t response_size = 0;
 
         /* method, uri and version */
         connection_readline(conn_from_client, line, sizeof(line));
@@ -172,13 +192,11 @@ int main(int argc, char *argv[])
         }
 
         /* parse the uri */
-        struct httpuri *httpuri = httpuri_uri_to_httpuri(uri);
+        httpuri = httpuri_uri_to_httpuri(uri);
         if (httpuri == NULL) {
             fprintf(stderr, "uri is invalid or memory allocation fails\n");
             goto disconnect;
         }
-
-        fprintf(stderr, "%s %s %s\n", method, uri, version);
 
         /* connect to original server */
         conn_to_server = connection_new();
@@ -254,10 +272,14 @@ int main(int argc, char *argv[])
 
         /* forward the response */
         n = connection_recv(conn_to_server, line, sizeof(line));
+        response_size += n;
         while (n > 0) {
             connection_send(conn_from_client, line, n);
             n = connection_recv(conn_to_server, line, sizeof(line));
+            response_size += n;
         }
+
+        logger_log(logger, conn_from_client, httpuri, response_size);
 
 disconnect:
         httpuri_del(httpuri);
@@ -265,10 +287,81 @@ disconnect:
         connection_del(conn_to_server);
         conn_from_client = NULL;
         conn_to_server = NULL;
+        httpuri = NULL;
     }
 
+    result = EXIT_SUCCESS;
+    goto out;
+
+fail:
+    result = EXIT_FAILURE;
+out:
     listener_del(listener);
+    logger_del(logger);
     exit(EXIT_SUCCESS);
+}
+
+static struct logger *logger_new(const char *filename)
+{
+    assert(filename != NULL);
+    struct logger *logger;
+    logger = calloc(1, sizeof(*logger));
+    if (!logger_init(logger, filename)) {
+        return NULL;
+    }
+
+    return logger;
+}
+
+static void logger_del(struct logger *logger)
+{
+    if (logger != NULL) {
+        return;
+    }
+
+    fclose(logger->file);
+    free(logger->filename);
+    free(logger);
+}
+
+static int logger_init(struct logger *logger, const char *filename)
+{
+    assert(logger != NULL);
+    assert(filename != NULL);
+
+    logger->filename = strdup(filename);
+    if (logger->filename == NULL) {
+        return 0;
+    }
+
+    logger->file = fopen(logger->filename, "w");
+    if (logger->file == NULL) {
+        free(logger->filename);
+        return 0;
+    }
+
+    return 1;
+}
+
+static void logger_log(struct logger *logger, struct connection *conn, struct httpuri *httpuri, size_t size)
+{
+    assert(logger != NULL);
+    assert(logger->file != NULL);
+    assert(conn != NULL);
+    assert(httpuri != NULL);
+
+    time_t t;
+    char time_str[64];
+    char hostip[NI_MAXHOST];
+    struct tm tm;
+
+    getnameinfo((struct sockaddr *)&conn->addr, conn->addrlen, hostip, sizeof(hostip), NULL, 0, NI_NUMERICHOST);
+
+    time(&t);
+    localtime_r(&t, &tm);
+    strftime(time_str, sizeof(time_str), "%a %d %b %G %T %Z", &tm);
+    fprintf(logger->file, "%s: %s http://%s%s %zd\n", time_str, hostip, httpuri->host, httpuri->abs_path, size);
+    fflush(logger->file);
 }
 
 static struct listener *listener_new()
@@ -376,7 +469,7 @@ static struct connection *listener_accept(struct listener *listener)
         return NULL;
     }
 
-    int sock = accept(listener->sock, &conn->addr, &conn->addrlen);
+    int sock = accept(listener->sock, (struct sockaddr *)&conn->addr, &conn->addrlen);
     if (sock == -1) {
         connection_del(conn);
         return NULL;
@@ -417,6 +510,7 @@ static void connection_init(struct connection *conn)
     conn->sock = -1;
     conn->rstart = 0;
     conn->rlen = 0;
+    conn->addrlen = 0;
 }
 
 static int connection_connect(struct connection *conn, const char *host, const char *service)
@@ -466,8 +560,8 @@ static int connection_connect(struct connection *conn, const char *host, const c
     }
 
     conn->sock = sock;
-    conn->addr = *(aip->ai_addr);
     conn->addrlen = aip->ai_addrlen;
+    memcpy(&conn->addr, aip->ai_addr, conn->addrlen);
     freeaddrinfo(res);
 
     return 0;

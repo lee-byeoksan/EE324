@@ -75,6 +75,7 @@ static ssize_t connection_send(struct connection *conn, const void *buf, size_t 
 static ssize_t connection_readline(struct connection *conn, void *buf, size_t len);
 static void connection_skip_space(struct connection *conn);
 static ssize_t connection_readword(struct connection *conn, void *buf, size_t len);
+static int connection_getpeername(struct connection *conn, struct sockaddr *addr, socklen_t *addrlen);
 
 static struct httpuri *httpuri_new(void);
 static void httpuri_del(struct httpuri *httpuri);
@@ -99,8 +100,6 @@ struct connection {
     uint8_t rbuffer[CONN_BUF_LEN];
     uint32_t rstart;
     uint32_t rlen;
-    struct sockaddr_storage addr;
-    socklen_t addrlen;
 };
 
 struct httpuri {
@@ -359,12 +358,25 @@ static void logger_log(struct logger *logger, struct connection *conn, struct ht
     char time_str[64];
     char hostip[NI_MAXHOST];
     struct tm tm;
+    int s;
 
-    getnameinfo((struct sockaddr *)&conn->addr, conn->addrlen, hostip, sizeof(hostip), NULL, 0, NI_NUMERICHOST);
+    struct sockaddr_storage addr = {0};
+    socklen_t addrlen;
 
     time(&t);
     localtime_r(&t, &tm);
     strftime(time_str, sizeof(time_str), "%a %d %b %G %T %Z", &tm);
+
+    s = connection_getpeername(conn, (struct sockaddr *)&addr, &addrlen);
+    if (s || addr.ss_family == AF_UNSPEC) {
+        strcpy(hostip, "(unknown)");
+    } else {
+        s = getnameinfo((struct sockaddr *)&addr, addrlen, hostip, sizeof(hostip), NULL, 0, NI_NUMERICHOST);
+        if (s) {
+            strcpy(hostip, "(unknown)");
+        }
+    }
+
     fprintf(logger->file, "%s: %s http://%s%s %zd\n", time_str, hostip, httpuri->host, httpuri->abs_path, size);
     fflush(logger->file);
 }
@@ -474,7 +486,7 @@ static struct connection *listener_accept(struct listener *listener)
         return NULL;
     }
 
-    int sock = accept(listener->sock, (struct sockaddr *)&conn->addr, &conn->addrlen);
+    int sock = accept(listener->sock, NULL, 0);
     if (sock == -1) {
         connection_del(conn);
         return NULL;
@@ -515,7 +527,6 @@ static void connection_init(struct connection *conn)
     conn->sock = -1;
     conn->rstart = 0;
     conn->rlen = 0;
-    conn->addrlen = 0;
 }
 
 static int connection_connect(struct connection *conn, const char *host, const char *service)
@@ -565,8 +576,6 @@ static int connection_connect(struct connection *conn, const char *host, const c
     }
 
     conn->sock = sock;
-    conn->addrlen = aip->ai_addrlen;
-    memcpy(&conn->addr, aip->ai_addr, conn->addrlen);
     freeaddrinfo(res);
 
     return 0;
@@ -729,6 +738,11 @@ static ssize_t connection_readword(struct connection *conn, void *buf, size_t le
 
     *p = '\0';
     return p - (char *)buf;
+}
+
+static int connection_getpeername(struct connection *conn, struct sockaddr *addr, socklen_t *addrlen)
+{
+    return getpeername(conn->sock, addr, addrlen);
 }
 
 static struct httpuri *httpuri_new(void)

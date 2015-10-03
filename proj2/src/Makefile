@@ -16,6 +16,6 @@ $(SRC)/%.o: $(SRC)/%.c
 	$(CC) $(CFLAGS) -o $@ -c $^
 
 clean: FORCE
-	rm -rf $(TARGET) $(patsubst %.o, $(SRC)/%.o, $(OBJS))
+	rm -rf $(TARGET) $(patsubst %.o, $(SRC)/%.o, $(OBJS)) proxy.log
 
 FORCE:

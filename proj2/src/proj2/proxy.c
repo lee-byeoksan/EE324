@@ -200,6 +200,11 @@ int main(int argc, char *argv[])
 
         /* connect to original server */
         conn_to_server = connection_new();
+        if (conn_to_server == NULL) {
+            fprintf(stderr, "no enough memory\n");
+            goto disconnect;
+        }
+
         s = connection_connect(conn_to_server, httpuri->host, httpuri->port);
         if (s) {
             fprintf(stderr, "failed to connect to the original server\n");

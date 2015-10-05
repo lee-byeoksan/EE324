@@ -3,7 +3,7 @@ CFLAGS=
 LDFLAGS=
 SRC=proj2
 TARGET=proxy
-OBJS=proxy.o
+OBJS=proxy.o connection.o listener.o httpuri.o logger.o
 
 .PHONY: all clean
 

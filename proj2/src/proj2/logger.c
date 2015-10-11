@@ -29,7 +29,7 @@ struct logger *logger_new(const char *filename)
 
 void logger_del(struct logger *logger)
 {
-    if (logger != NULL) {
+    if (logger == NULL) {
         return;
     }
 

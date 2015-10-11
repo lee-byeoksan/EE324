@@ -1,8 +1,10 @@
 #include "thread_pool.h"
 
+#include <stdio.h>
 #include <pthread.h>
 #include <sys/types.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #define MAX_THREAD_NUM 128
 
@@ -49,7 +51,7 @@ static int thread_pool_init(struct thread_pool *pool, size_t size);
 static void thread_pool_insert_thread(struct thread_pool *pool, struct thread *thread);
 static void thread_pool_insert_work(struct thread_pool *pool, struct work *work);
 static struct work *thread_pool_remove_work(struct thread_pool *pool);
-static void thread_loop(void *self);
+static void *thread_loop(void *self);
 static void thread_pool_release_threads(struct thread_pool *pool);
 static void thread_pool_release_works(struct thread_pool *pool);
 
@@ -63,7 +65,7 @@ struct thread_pool *thread_pool_new(size_t size) {
         return NULL;
     }
 
-    if (!thread_pool_init(pool, size)) {
+    if (thread_pool_init(pool, size)) {
         thread_pool_del(pool);
         return NULL;
     }
@@ -72,6 +74,10 @@ struct thread_pool *thread_pool_new(size_t size) {
 }
 
 void thread_pool_del(struct thread_pool *pool) {
+    if (pool == NULL) {
+        return;
+    }
+
     thread_pool_stop(pool);
 
     thread_pool_release_threads(pool);
@@ -104,6 +110,7 @@ int thread_pool_add_work(struct thread_pool *pool, workfunc func, void *arg)
 void thread_pool_stop(struct thread_pool *pool)
 {
     pool->running = false;
+    pthread_cond_broadcast(&pool->work_cv);
     pthread_mutex_lock(&pool->finish_mtx);
     while (pool->running_size > 0) {
         pthread_cond_wait(&pool->finish_cv, &pool->finish_mtx);
@@ -139,12 +146,12 @@ static int thread_pool_init(struct thread_pool *pool, size_t size)
         }
 
         thread_pool_insert_thread(pool, thread);
-        if (pthread_create(&thread->pthread, NULL, thread_loop, thread)) {
+        if (pthread_create(&thread->pthread, NULL, thread_loop, (void *)thread)) {
             result = 1;
             goto out;
         }
 
-        if (pthread_detach(&thread->pthread)) {
+        if (pthread_detach(thread->pthread)) {
             result = 1;
             goto out;
         }
@@ -175,7 +182,7 @@ static struct work *new_work(workfunc func, void *arg)
         return NULL;
     }
 
-    work->func = work;
+    work->func = func;
     work->arg = arg;
     return work;
 }
@@ -189,22 +196,24 @@ static void thread_pool_insert_work(struct thread_pool *pool, struct work *work)
 {
     pthread_mutex_lock(&pool->work_mtx);
     THREAD_POOL_LIST_ADD(pool, work_head, struct work, work);
+    pthread_cond_signal(&pool->work_cv);
     pthread_mutex_unlock(&pool->work_mtx);
 }
 
+/*
+ * Before call this function get the lock.
+ * After this function release the lock.
+ */
 static struct work *thread_pool_remove_work(struct thread_pool *pool)
 {
     struct work *work;
-    pthread_mutex_lock(&pool->work_mtx);
     if (pool->work_head == NULL) {
-        pthread_mutex_unlock(&pool->work_mtx);
         return NULL;
     }
 
     work = pool->work_head;
     if (work->next == work) {
         pool->work_head = NULL;
-        pthread_mutex_unlock(&pool->work_mtx);
         return work;
     }
 
@@ -215,13 +224,13 @@ static struct work *thread_pool_remove_work(struct thread_pool *pool)
     next->prev = prev;
 
     pool->work_head = next;
-    pthread_mutex_unlock(&pool->work_mtx);
     return work;
 }
 
 static void *thread_loop(void *self)
 {
     struct thread *thread = (struct thread *)self;
+    struct thread_pool *pool = thread->pool;
 
     while (true) {
         struct work *work;
@@ -241,7 +250,7 @@ static void *thread_loop(void *self)
         work = thread_pool_remove_work(pool);
         pthread_mutex_unlock(&pool->work_mtx);
 
-        work->func(work->args);
+        work->func(work->arg);
         free(work);
     }
 

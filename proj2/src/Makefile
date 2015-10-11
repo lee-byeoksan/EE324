@@ -1,9 +1,9 @@
 CC=gcc
 CFLAGS=
-LDFLAGS=
+LDFLAGS=-pthread
 SRC=proj2
 TARGET=proxy
-OBJS=proxy.o connection.o listener.o httpuri.o logger.o
+OBJS=proxy.o connection.o listener.o httpuri.o logger.o thread_pool.o
 
 .PHONY: all clean
 

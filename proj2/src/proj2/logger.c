@@ -5,10 +5,12 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
+#include <pthread.h>
 
 #include "logger.h"
 
 struct logger {
+    pthread_mutex_t mtx;
     char *filename;
     FILE *file;
 };
@@ -33,6 +35,7 @@ void logger_del(struct logger *logger)
         return;
     }
 
+    pthread_mutex_destroy(&logger->mtx);
     fclose(logger->file);
     free(logger->filename);
     free(logger);
@@ -53,6 +56,8 @@ static int logger_init(struct logger *logger, const char *filename)
         free(logger->filename);
         return 0;
     }
+
+    pthread_mutex_init(&logger->mtx, NULL);
 
     return 1;
 }
@@ -87,7 +92,9 @@ void logger_log(struct logger *logger, struct connection *conn, struct httpuri *
         }
     }
 
+    pthread_mutex_lock(&logger->mtx);
     fprintf(logger->file, "%s: %s http://%s%s %zd\n", time_str, hostip, httpuri_get_host(httpuri), httpuri_get_abs_path(httpuri), size);
     fflush(logger->file);
+    pthread_mutex_unlock(&logger->mtx);
 }
 

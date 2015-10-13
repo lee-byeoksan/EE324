@@ -287,8 +287,8 @@ static int handle_connection(void *arg)
         response_size += n;
     }
 
-    // logger_log(logger, conn_from_client, httpuri, response_size);
-    printf("%s:%s%s done\n", httpuri_get_host(httpuri), httpuri_get_port(httpuri), httpuri_get_abs_path(httpuri));
+    logger_log(logger, conn_from_client, httpuri, response_size);
+    //printf("%s:%s%s done\n", httpuri_get_host(httpuri), httpuri_get_port(httpuri), httpuri_get_abs_path(httpuri));
 
 disconnect:
     httpuri_del(httpuri);

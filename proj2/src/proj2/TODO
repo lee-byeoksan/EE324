@@ -1,1 +1,2 @@
 lock for logger
+fix the inconsistency for success/fail return value

@@ -22,7 +22,7 @@ struct logger *logger_new(const char *filename)
     assert(filename != NULL);
     struct logger *logger;
     logger = calloc(1, sizeof(*logger));
-    if (!logger_init(logger, filename)) {
+    if (logger_init(logger, filename)) {
         return NULL;
     }
 
@@ -48,18 +48,18 @@ static int logger_init(struct logger *logger, const char *filename)
 
     logger->filename = strdup(filename);
     if (logger->filename == NULL) {
-        return 0;
+        return 1;
     }
 
     logger->file = fopen(logger->filename, "w");
     if (logger->file == NULL) {
         free(logger->filename);
-        return 0;
+        return 1;
     }
 
     pthread_mutex_init(&logger->mtx, NULL);
 
-    return 1;
+    return 0;
 }
 
 void logger_log(struct logger *logger, struct connection *conn, struct httpuri *httpuri, size_t size)

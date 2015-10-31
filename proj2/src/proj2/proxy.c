@@ -26,6 +26,8 @@
 #include "listener.h"
 #include "logger.h"
 #include "thread_pool.h"
+#include "lru_cache.h"
+#include "centry.h"
 
 #define LOGFILE "proxy.log"
 
@@ -35,9 +37,10 @@ static void send_bad_request(struct connection *conn);
 
 static int handle_connection(void *arg);
 
-struct ptr_pair {
+struct ptr_triple {
     void *first;
     void *second;
+    void *third;
 };
 
 int main(int argc, char *argv[])
@@ -51,6 +54,7 @@ int main(int argc, char *argv[])
     struct logger *logger = NULL;
     struct thread_pool *pool = NULL;
     struct sigaction action;
+    struct lru_cache *cache = NULL;
 
     if (argc < 2) {
         fprintf(stderr, "%s <port>\n", argv[0]);
@@ -73,6 +77,12 @@ int main(int argc, char *argv[])
     pool = thread_pool_new(64);
     if (pool == NULL) {
         fprintf(stderr, "cannot create thread pool\n");
+        goto fail;
+    }
+
+    cache = lru_cache_new(5 * 1024 * 1024, 512 * 1024);
+    if (cache == NULL) {
+        fprintf(stderr, "cannot create LRU cache\n");
         goto fail;
     }
 
@@ -99,17 +109,18 @@ int main(int argc, char *argv[])
     }
 
     while ((conn_from_client = listener_accept(listener)) != NULL) {
-        struct ptr_pair *pair = malloc(sizeof(*pair));
-        if (pair == NULL) {
+        struct ptr_triple *triple = malloc(sizeof(*triple));
+        if (triple == NULL) {
             fprintf(stderr, "no enough memory\n");
             connection_del(conn_from_client);
             thread_pool_stop(pool);
             goto fail;
         }
 
-        pair->first = conn_from_client;
-        pair->second = logger;
-        thread_pool_add_work(pool, handle_connection, pair);
+        triple->first = conn_from_client;
+        triple->second = logger;
+        triple->third = cache;
+        thread_pool_add_work(pool, handle_connection, triple);
     }
 
     result = EXIT_SUCCESS;
@@ -121,6 +132,7 @@ out:
     listener_del(listener);
     logger_del(logger);
     thread_pool_del(pool);
+    lru_cache_del(cache);
     exit(EXIT_SUCCESS);
 }
 
@@ -155,7 +167,7 @@ static void send_bad_request(struct connection *conn)
 
 static int handle_connection(void *arg)
 {
-    struct ptr_pair *pair = (struct ptr_pair *)arg;
+    struct ptr_triple *triple = (struct ptr_triple *)arg;
     struct connection *conn_from_client, *conn_to_server;
     struct logger *logger;
     int s;
@@ -171,10 +183,18 @@ static int handle_connection(void *arg)
     int do_not_forward;
     struct httpuri *httpuri = NULL;
     size_t response_size = 0;
+    struct lru_cache *cache;
+    struct centry *entry;
+    char *key;
+    char *data;
 
-    conn_from_client = pair->first;
-    logger = pair->second;
-    free(pair);
+    conn_from_client = triple->first;
+    logger = triple->second;
+    cache = triple->third;
+    conn_to_server = NULL;
+    free(triple);
+
+    key = malloc(255);
 
     /* method, uri and version */
     connection_readline(conn_from_client, line, sizeof(line));
@@ -198,6 +218,31 @@ static int handle_connection(void *arg)
         fprintf(stderr, "uri is invalid or memory allocation fails\n");
         send_bad_request(conn_from_client);
         goto disconnect;
+    }
+
+    if (key != NULL) {
+        n = snprintf(key, 255, "%s:%s%s", httpuri_get_host(httpuri), httpuri_get_port(httpuri), httpuri_get_abs_path(httpuri));
+    }
+
+    if (key != NULL && n > 0) {
+        /* cache is there */
+        lru_cache_lock(cache);
+        entry = lru_cache_find(cache, key);
+        if (entry != NULL) {
+            printf("GOT %s\n", key);
+            n = snprintf(line, sizeof(line), "HTTP/1.0 200 OK" CRLF);
+            connection_send(conn_from_client, line, n);
+            n = snprintf(line, sizeof(line), "Content-length: %zd" CRLF, centry_size(entry));
+            /* Date? */
+            connection_send(conn_from_client, line, n);
+            connection_send(conn_from_client, CRLF, 2);
+            connection_send(conn_from_client, centry_data(entry), centry_size(entry));
+            lru_cache_unlock(cache);
+            free(key);
+            goto disconnect;
+        }
+
+        lru_cache_unlock(cache);
     }
 
     /* connect to original server */
@@ -272,23 +317,91 @@ static int handle_connection(void *arg)
 
     /* forward the body */
     size_t left = content_length;
-    if (left > 0) {
+    while (left > 0) {
         n = connection_recv(conn_from_client, line, sizeof(line));
         connection_send(conn_to_server, line, n);
         left -= n;
     }
 
-    /* forward the response */
-    n = connection_recv(conn_to_server, line, sizeof(line));
-    response_size += n;
-    while (n > 0) {
-        connection_send(conn_from_client, line, n);
-        n = connection_recv(conn_to_server, line, sizeof(line));
-        response_size += n;
+    /* response start-line */
+    n = connection_readline(conn_to_server, line, sizeof(line));
+    connection_send(conn_from_client, line, n);
+
+    /* response headers */
+    content_length = 0;
+    n = connection_readline(conn_to_server, line, sizeof(line));
+    while (n > 2) {
+        if (line[0] != SP && line[0] != HT) {
+            /* new header field */
+            do_not_forward = 0;
+        }
+
+        header_end = strchr(line, ':');
+        if (header_end != NULL) {
+            header_len = header_end - line;
+            if (!strncasecmp(line, "content-length", header_len)) {
+                content_length = strtoul(header_end + 1, NULL, 10);
+            }
+        }
+
+        if (!do_not_forward) {
+            connection_send(conn_from_client, line, n);
+        }
+
+        n = connection_readline(conn_to_server, line, sizeof(line));
     }
 
-    logger_log(logger, conn_from_client, httpuri, response_size);
+    /* try to make a cache entry */
+    if (content_length <= lru_cache_max_obj_size(cache)) {
+        entry = centry_new();
+        /* key is created above */
+        data = malloc(lru_cache_max_obj_size(cache));
+
+        if (entry == NULL || key == NULL || data == NULL) {
+            free(entry);
+            free(key);
+            free(data);
+            entry = NULL;
+            data = NULL;
+            key = NULL;
+        } else {
+            centry_set_key(entry, key);
+            centry_set_data(entry, data);
+            key = NULL;
+        }
+    }
+
+    size_t size = 0;
+    n = connection_recv(conn_to_server, line, sizeof(line));
+    while (n > 0) {
+        connection_send(conn_from_client, line, n);
+
+        if (data != NULL) {
+            if (size + n > lru_cache_max_obj_size(cache)) {
+                centry_del(entry);
+                entry = NULL;
+                data = NULL;
+            } else {
+                memcpy(data, line, n);
+                data += n;
+            }
+        }
+        size += n;
+        n = connection_recv(conn_to_server, line, sizeof(line));
+    }
+
+    if (entry != NULL) {
+        centry_set_size(entry, size);
+    }
+
+    logger_log(logger, conn_from_client, httpuri, size);
     //printf("%s:%s%s done\n", httpuri_get_host(httpuri), httpuri_get_port(httpuri), httpuri_get_abs_path(httpuri));
+
+    if (entry != NULL) {
+        lru_cache_lock(cache);
+        lru_cache_add(cache, entry);
+        lru_cache_unlock(cache);
+    }
 
 disconnect:
     httpuri_del(httpuri);

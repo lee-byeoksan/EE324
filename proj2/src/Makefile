@@ -3,7 +3,7 @@ CFLAGS=
 LDFLAGS=-pthread
 SRC=proj2
 TARGET=proxy
-OBJS=proxy.o connection.o listener.o httpuri.o logger.o thread_pool.o
+OBJS=proxy.o connection.o listener.o httpuri.o logger.o thread_pool.o centry.o lru_cache.o
 
 .PHONY: all clean
 

@@ -1,4 +1,6 @@
 #include "thread_pool.h"
+#include "lru_cache.h"
+#include "centry.h"
 
 #include <stdio.h>
 #include <pthread.h>

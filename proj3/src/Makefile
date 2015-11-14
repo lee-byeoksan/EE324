@@ -3,7 +3,7 @@ CFLAGS=
 LDFLAGS=-levent
 TARGET=proxy
 SRC=proj3
-OBJS=proxy.o
+OBJS=proxy.o context.o
 
 .PHONY: all clean
 

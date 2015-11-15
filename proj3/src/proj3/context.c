@@ -17,13 +17,13 @@
 #include "defs.h"
 
 #define LINE_SIZE 2048
-#define BUFF_SIZE 4096
+#define BUFFER_SIZE 8192
+#define PBUFFER_SIZE 4096
 #define HOST_SIZE 128
 #define PATH_SIZE 1024
 #define PORT_SIZE 8
-#define STATUS_SIZE 4
-#define HEADER_SIZE 128
-#define PARSE_BUFF_SIZE 1024
+#define FIELD_SIZE 128
+#define VALUE_SIZE 4096
 #define STATUS_SIZE 4
 #define REASON_SIZE 32
 
@@ -60,10 +60,18 @@ struct context {
     struct event_base *base;
 
     /* common data */
-    uint8_t parse_buff[PARSE_BUFF_SIZE];
-    size_t parse_buff_len;
+    uint8_t pbuffer[PBUFFER_SIZE];
+    size_t pbuffer_len;
     bool skip_header;
     bool is_content_length;
+    uint8_t buffer[BUFFER_SIZE];
+    size_t buffer_len;
+
+    /* Temporary Header */
+    uint8_t field[FIELD_SIZE];
+    uint8_t value[VALUE_SIZE];
+    size_t field_len;
+    size_t value_len;
 
     /* client data */
     evutil_socket_t csock;
@@ -71,11 +79,9 @@ struct context {
     socklen_t caddrlen;
     enum http_state cstate;
     const uint8_t *cwrite_ptr;
-    uint8_t cbuff[BUFF_SIZE];
     uint8_t host[HOST_SIZE];
     uint8_t path[PATH_SIZE];
     uint8_t port[PORT_SIZE];
-    size_t cbuff_len;
     size_t cwrite_len;
     size_t host_len;
     size_t path_len;
@@ -88,38 +94,46 @@ struct context {
     socklen_t saddrlen;
     enum http_state sstate;
     const uint8_t *swrite_ptr;
-    uint8_t sbuff[BUFF_SIZE];
-    uint8_t status[STATUS_SIZE];
-    uint8_t reason[REASON_SIZE];
-    size_t sbuff_len;
     size_t swrite_len;
-    size_t status_len;
-    size_t reason_len;
     uint32_t scontent_len;
 };
 
-
 static void context_init(struct context *ctx);
+static void register_client_read_event(struct context *ctx);
+static void register_client_write_event(struct context *ctx);
+static void register_server_read_event(struct context *ctx);
+static void register_server_write_event(struct context *ctx);
+
+/***********************
+ * Callbacks           *
+ ***********************/
 static void cread_callback(evutil_socket_t sock, short what, void *arg);
 static void cwrite_callback(evutil_socket_t sock, short what, void *arg);
 static void sread_callback(evutil_socket_t sock, short what, void *arg);
 static void swrite_callback(evutil_socket_t sock, short what, void *arg);
-static void parse_uri(struct context *ctx, const uint8_t *uri, const size_t len);
-static void copy_path_to_cbuff(struct context *ctx);
+
+/***********************
+ * Utils               *
+ ***********************/
+static bool is_content_length_header(const uint8_t *header, const size_t len);
 static bool is_valid_version(const uint8_t *version, const size_t len);
 static bool skippable_header(const uint8_t *header, const size_t len);
-static bool is_content_length_header(const uint8_t *header, const size_t len);
-static void internal_error(struct context *ctx);
+static void add_connection_header(struct context *ctx);
+static void add_host_header(struct context *ctx);
+static void add_to_pbuffer(struct context *ctx, const uint8_t *ptr, const size_t len);
 static void bad_request(struct context *ctx);
 static void bad_response(struct context *ctx);
-static void not_found(struct context *ctx);
-static void add_host_header(struct context *ctx);
-static void add_connection_header(struct context *ctx);
+static void clear_pbuffer(struct context *ctx);
 static void connect_to_server(struct context *ctx);
-static void write_to_server(struct context *ctx);
+static void copy_path_to_buffer(struct context *ctx);
+static void internal_error(struct context *ctx);
+static void not_found(struct context *ctx);
+static void parse_uri(struct context *ctx, const uint8_t *uri, const size_t len);
 static void write_to_client(struct context *ctx);
-static void add_to_parse_buff(struct context *ctx, const uint8_t *ptr, const size_t len);
-static void clear_parse_buff(struct context *ctx);
+static void write_to_server(struct context *ctx);
+static void append_pbuffer_to_buffer(struct context *ctx);
+static void pbuffer_to_field(struct context *ctx);
+static void pbuffer_to_value(struct context *ctx);
 
 struct context *
 context_new()
@@ -131,45 +145,6 @@ context_new()
 
     context_init(ctx);
     return ctx;
-}
-
-static void
-context_init(struct context *ctx)
-{
-    /* event */
-    ctx->base = NULL;
-
-    /* common */
-    ctx->parse_buff_len = 0;
-    ctx->skip_header = false;
-    ctx->is_content_length = false;
-
-    /* client */
-    ctx->csock = -1;
-    ctx->caddrlen = 0;
-    ctx->cstate = st_start;
-    ctx->cwrite_ptr = NULL;
-    ctx->cbuff_len = 0;
-    ctx->cwrite_len = 0;
-    ctx->host[0] = NIL;
-    ctx->port[0] = NIL;
-    ctx->path[0] = NIL;
-    ctx->host_len = 0;
-    ctx->path_len = 0;
-    ctx->port_len = 0;
-    ctx->ccontent_len = 0;
-
-    /* server */
-    ctx->ssock = -1;
-    ctx->saddrlen = 0;
-    ctx->sstate = st_start;
-    ctx->sbuff_len = 0;
-    ctx->swrite_len = 0;
-    ctx->status[0] = NIL;
-    ctx->reason[0] = NIL;
-    ctx->status_len = 0;
-    ctx->reason_len = 0;
-    ctx->scontent_len = 0;
 }
 
 void
@@ -201,27 +176,71 @@ context_set_client(struct context *ctx, evutil_socket_t sock, struct sockaddr *a
 }
 
 void
+context_start_process(struct context *ctx)
+{
+    register_client_read_event(ctx);
+}
+
+static void
+context_init(struct context *ctx)
+{
+    /* event */
+    ctx->base = NULL;
+
+    /* common */
+    ctx->pbuffer_len = 0;
+    ctx->skip_header = false;
+    ctx->is_content_length = false;
+    ctx->buffer_len = 0;
+
+    ctx->field_len = 0;
+    ctx->value_len = 0;
+
+    /* client */
+    ctx->csock = -1;
+    ctx->caddrlen = 0;
+    ctx->cstate = st_start;
+    ctx->cwrite_ptr = NULL;
+    ctx->cwrite_len = 0;
+    ctx->host[0] = NIL;
+    ctx->port[0] = NIL;
+    ctx->path[0] = NIL;
+    ctx->host_len = 0;
+    ctx->path_len = 0;
+    ctx->port_len = 0;
+    ctx->ccontent_len = 0;
+
+    /* server */
+    ctx->ssock = -1;
+    ctx->saddrlen = 0;
+    ctx->sstate = st_start;
+    ctx->swrite_len = 0;
+    ctx->scontent_len = UINT32_MAX;
+}
+
+
+static void
 register_client_read_event(struct context *ctx)
 {
     struct event *ev = event_new(ctx->base, ctx->csock, EV_READ, cread_callback, ctx);
     event_add(ev, NULL);
 }
 
-void
+static void
 register_client_write_event(struct context *ctx)
 {
     struct event *ev = event_new(ctx->base, ctx->csock, EV_WRITE, cwrite_callback, ctx);
     event_add(ev, NULL);
 }
 
-void
+static void
 register_server_read_event(struct context *ctx)
 {
     struct event *ev = event_new(ctx->base, ctx->ssock, EV_READ, sread_callback, ctx);
     event_add(ev, NULL);
 }
 
-void
+static void
 register_server_write_event(struct context *ctx)
 {
     struct event *ev = event_new(ctx->base, ctx->ssock, EV_WRITE, swrite_callback, ctx);
@@ -247,10 +266,10 @@ cread_callback(evutil_socket_t sock, short what, void *arg)
     }
 
     /* state machine */
-    /* ctx->cbuff will contain content to send to server. */
-    ctx->cbuff_len = 0;
+    /* ctx->buffer will contain content to send to server. */
+    ctx->buffer_len = 0;
     for (ch = line; ch < line+n; ch++) {
-reparse:
+again:
         switch (ctx->cstate) {
         case st_start:
             if (*ch == SP || *ch == HT) {
@@ -262,7 +281,7 @@ reparse:
             } else {
                 /* not that strict */
                 ctx->cstate = st_method;
-                goto reparse;
+                goto again;
             }
             break;
 
@@ -274,29 +293,29 @@ reparse:
                 bad_request(ctx);
                 return;
             } else {
-                ctx->cbuff[ctx->cbuff_len++] = *ch;
+                ctx->buffer[ctx->buffer_len++] = *ch;
             }
             break;
 
         case st_uri:
             if (*ch == SP) {
-                parse_uri(ctx, ctx->parse_buff, ctx->parse_buff_len);
+                parse_uri(ctx, ctx->pbuffer, ctx->pbuffer_len);
                 if (ctx->host[0] == NIL) {
                     /* bad request */
                     bad_request(ctx);
                     return;
                 } else {
-                    ctx->cbuff[ctx->cbuff_len++] = SP;
-                    copy_path_to_cbuff(ctx);
+                    ctx->buffer[ctx->buffer_len++] = SP;
+                    copy_path_to_buffer(ctx);
                 }
-                clear_parse_buff(ctx);
+                clear_pbuffer(ctx);
                 ctx->cstate = st_version;
             } else if (*ch == CR || *ch == LF) {
                 /* bad request */
                 bad_request(ctx);
                 return;
             } else {
-                add_to_parse_buff(ctx, ch, 1);
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
@@ -306,24 +325,24 @@ reparse:
                 bad_request(ctx);
                 return;
             } else if (*ch == CR || *ch == LF) {
-                if (is_valid_version(ctx->parse_buff, ctx->parse_buff_len)) {
-                    ctx->cbuff[ctx->cbuff_len++] = SP;
-                    memcpy(ctx->cbuff+ctx->cbuff_len, "HTTP/1.0\r\n", sizeof("HTTP/1.0\r\n")-1);
-                    ctx->cbuff_len += sizeof("HTTP/1.0\r\n")-1;
+                if (is_valid_version(ctx->pbuffer, ctx->pbuffer_len)) {
+                    ctx->buffer[ctx->buffer_len++] = SP;
+                    memcpy(ctx->buffer+ctx->buffer_len, "HTTP/1.0\r\n", sizeof("HTTP/1.0\r\n")-1);
+                    ctx->buffer_len += sizeof("HTTP/1.0\r\n")-1;
                 } else {
                     /* bad request */
                     bad_request(ctx);
                     return;
                 }
 
-                clear_parse_buff(ctx);
+                clear_pbuffer(ctx);
                 if (*ch == CR) {
                     ctx->cstate = st_line_end;
                 } else {
                     ctx->cstate = st_field;
                 }
             } else {
-                add_to_parse_buff(ctx, ch, 1);
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
@@ -338,38 +357,41 @@ reparse:
             break;
 
         case st_field:
-            if (*ch == CR) {
-                ctx->cstate = st_field_cr;
-            } else if (*ch == LF) {
+            if (*ch == CR || *ch == LF) {
                 add_host_header(ctx);
                 add_connection_header(ctx);
-                memcpy(ctx->cbuff+ctx->cbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->cbuff_len += sizeof("\r\n")-1;
-                if (ctx->ccontent_len == 0) {
+                ctx->buffer[ctx->buffer_len++] = CR;
+                if (*ch == LF) {
+                    ctx->buffer[ctx->buffer_len++] = LF;
+                }
+
+                clear_pbuffer(ctx);
+                if (*ch == CR) {
+                    ctx->cstate = st_field_cr;
+                } else if (ctx->ccontent_len == 0) {
                     ctx->cstate = st_done;
                 } else {
                     ctx->cstate = st_body;
                 }
-            } else if (*ch == SP || *ch == HT) {
-                ctx->cstate = st_value;
             } else if (*ch == ':') {
-                ctx->skip_header = skippable_header(ctx->parse_buff, ctx->parse_buff_len);
-                ctx->is_content_length = is_content_length_header(ctx->parse_buff, ctx->parse_buff_len);
+                pbuffer_to_field(ctx);
+                ctx->skip_header = skippable_header(ctx->field, ctx->field_len);
+                ctx->is_content_length = is_content_length_header(ctx->field, ctx->field_len);
+
                 if (!ctx->skip_header) {
-                    memcpy(ctx->cbuff+ctx->cbuff_len, ctx->parse_buff, ctx->parse_buff_len);
-                    ctx->cbuff_len += ctx->parse_buff_len;
-                    memcpy(ctx->cbuff+ctx->cbuff_len, ": ", sizeof(": ")-1);
-                    ctx->cbuff_len += sizeof(": ")-1;
+                    append_pbuffer_to_buffer(ctx);
+                    ctx->buffer[ctx->buffer_len++] = ':';
+                    ctx->buffer[ctx->buffer_len++] = SP;
                 }
 
                 if (ctx->is_content_length) {
                     ctx->ccontent_len = 0;
                 }
 
-                clear_parse_buff(ctx);
+                clear_pbuffer(ctx);
                 ctx->cstate = st_before_value;
             } else {
-                add_to_parse_buff(ctx, ch, 1);
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
@@ -378,18 +400,31 @@ reparse:
                 /* skip */
             } else {
                 ctx->cstate = st_value;
-                goto reparse;
+                goto again;
             }
             break;
 
         case st_value:
             if (*ch == CR) {
+                if (!ctx->skip_header) {
+                    pbuffer_to_value(ctx);
+                    append_pbuffer_to_buffer(ctx);
+                    ctx->buffer[ctx->buffer_len++] = CR;
+                }
+                clear_pbuffer(ctx);
                 ctx->cstate = st_value_cr;
             } else if (*ch == LF) {
+                if (!ctx->skip_header) {
+                    pbuffer_to_value(ctx);
+                    append_pbuffer_to_buffer(ctx);
+                    ctx->buffer[ctx->buffer_len++] = CR;
+                    ctx->buffer[ctx->buffer_len++] = LF;
+                }
+                clear_pbuffer(ctx);
                 ctx->cstate = st_field;
             } else {
                 if (!ctx->skip_header) {
-                    ctx->cbuff[ctx->cbuff_len++] = *ch;
+                    add_to_pbuffer(ctx, ch, 1);
                 }
 
                 if (ctx->is_content_length) {
@@ -401,6 +436,9 @@ reparse:
 
         case st_value_cr:
             if (*ch == LF) {
+                if (!ctx->skip_header) {
+                    ctx->buffer[ctx->buffer_len++] = LF;
+                }
                 ctx->cstate = st_field;
             } else {
                 /* bad request */
@@ -411,10 +449,7 @@ reparse:
 
         case st_field_cr:
             if (*ch == LF) {
-                add_host_header(ctx);
-                add_connection_header(ctx);
-                memcpy(ctx->cbuff+ctx->cbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->cbuff_len += sizeof("\r\n")-1;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 if (ctx->ccontent_len == 0) {
                     ctx->cstate = st_done;
                 } else {
@@ -428,7 +463,7 @@ reparse:
             break;
 
         case st_body:
-            ctx->cbuff[ctx->cbuff_len++] = *ch;
+            ctx->buffer[ctx->buffer_len++] = *ch;
             ctx->ccontent_len--;
             if (ctx->ccontent_len == 0) {
                 ctx->cstate = st_done;
@@ -451,8 +486,8 @@ done:
     }
 
     /* it's time to write */
-    ctx->swrite_ptr = ctx->cbuff;
-    ctx->swrite_len = ctx->cbuff_len;
+    ctx->swrite_ptr = ctx->buffer;
+    ctx->swrite_len = ctx->buffer_len;
     write_to_server(ctx);
 }
 
@@ -473,7 +508,7 @@ sread_callback(evutil_socket_t sock, short what, void *arg)
     assert(sock == ctx->ssock);
     assert((what & EV_READ) && !(what & EV_WRITE));
 
-    n = recv(sock, line, LINE_SIZE, 0);
+    n = recv(sock, line, LINE_SIZE-1, 0);
     if (n == -1) {
         /* internal error */
         internal_error(ctx);
@@ -481,9 +516,9 @@ sread_callback(evutil_socket_t sock, short what, void *arg)
     }
 
     /* update the state */
-    ctx->sbuff_len = 0;
+    ctx->buffer_len = 0;
     for (ch = line; ch < line+n; ch++) {
-reparse:
+again:
         switch (ctx->sstate) {
         case st_start:
             if (*ch == SP || *ch == HT) {
@@ -495,7 +530,7 @@ reparse:
             } else {
                 /* not that strict */
                 ctx->sstate = st_version;
-                goto reparse;
+                goto again;
             }
             break;
 
@@ -505,48 +540,56 @@ reparse:
                 bad_response(ctx);
                 return;
             } else if (*ch == SP) {
-                if (is_valid_version(ctx->parse_buff, ctx->parse_buff_len)) {
-                    memcpy(ctx->sbuff+ctx->sbuff_len, "HTTP/1.0", sizeof("HTTP/1.0")-1);
-                    ctx->sbuff_len += sizeof("HTTP/1.0")-1;
-                } else {
+                if (!is_valid_version(ctx->pbuffer, ctx->pbuffer_len)) {
                     /* bad response */
                     bad_response(ctx);
                     return;
                 }
 
-                clear_parse_buff(ctx);
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = SP;
                 ctx->sstate = st_status;
             } else {
-                add_to_parse_buff(ctx, ch, 1);
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
         case st_status:
             if (*ch == SP || *ch == HT) {
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = SP;
                 ctx->sstate = st_reason;
             } else if (*ch == CR || *ch == LF) {
                 /* bad response */
                 bad_response(ctx);
             } else {
                 /* TODO: should we check if it is number? */
-                ctx->status[ctx->status_len++] = *ch;
-                ctx->sbuff[ctx->sbuff_len++] = *ch;
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
         case st_reason:
             if (*ch == CR) {
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = CR;
                 ctx->sstate = st_line_end;
             } else if (*ch == LF) {
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = CR;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 ctx->sstate = st_field;
             } else {
-                ctx->reason[ctx->reason_len++] = *ch;
-                ctx->sbuff[ctx->sbuff_len++] = *ch;
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
         case st_line_end:
             if (*ch == LF) {
+                ctx->buffer[ctx->buffer_len++] = LF;
                 ctx->sstate = st_field;
             } else {
                 /* bad response */
@@ -557,33 +600,31 @@ reparse:
 
         case st_field:
             if (*ch == CR) {
+                ctx->buffer[ctx->buffer_len++] = CR;
                 ctx->sstate = st_field_cr;
             } else if (*ch == LF) {
-                memcpy(ctx->sbuff+ctx->sbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->sbuff_len += sizeof("\r\n")-1;
+                ctx->buffer[ctx->buffer_len++] = CR;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 if (ctx->scontent_len == 0) {
                     ctx->sstate = st_done;
                 } else {
                     ctx->sstate = st_body;
                 }
-            } else if (*ch == SP || *ch == HT) {
-                ctx->sbuff[ctx->sbuff_len++] = ',';
-                ctx->sstate = st_before_value;
             } else if (*ch == ':') {
-                ctx->is_content_length = is_content_length_header(ctx->parse_buff, ctx->parse_buff_len);
-                memcpy(ctx->sbuff+ctx->sbuff_len, ctx->parse_buff, ctx->parse_buff_len);
-                ctx->sbuff_len += ctx->parse_buff_len;
-                memcpy(ctx->sbuff+ctx->sbuff_len, ": ", sizeof(": ")-1);
-                ctx->sbuff_len += sizeof(": ")-1;
+                pbuffer_to_field(ctx);
+                ctx->is_content_length = is_content_length_header(ctx->field, ctx->field_len);
+                append_pbuffer_to_buffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = ':';
+                ctx->buffer[ctx->buffer_len++] = SP;
 
                 if (ctx->is_content_length) {
                     ctx->scontent_len = 0;
                 }
 
-                clear_parse_buff(ctx);
+                clear_pbuffer(ctx);
                 ctx->sstate = st_before_value;
             } else {
-                add_to_parse_buff(ctx, ch, 1);
+                add_to_pbuffer(ctx, ch, 1);
             }
             break;
 
@@ -592,22 +633,26 @@ reparse:
                 /* skip */
             } else {
                 ctx->sstate = st_value;
-                goto reparse;
+                goto again;
             }
             break;
 
         case st_value:
             if (*ch == CR) {
+                pbuffer_to_value(ctx);
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = CR;
                 ctx->sstate = st_value_cr;
             } else if (*ch == LF) {
-                memcpy(ctx->sbuff+ctx->sbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->sbuff_len += sizeof("\r\n")-1;
+                pbuffer_to_value(ctx);
+                append_pbuffer_to_buffer(ctx);
+                clear_pbuffer(ctx);
+                ctx->buffer[ctx->buffer_len++] = CR;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 ctx->sstate = st_field;
             } else {
-                if (!ctx->skip_header) {
-                    ctx->sbuff[ctx->sbuff_len++] = *ch;
-                }
-
+                add_to_pbuffer(ctx, ch, 1);
                 if (ctx->is_content_length) {
                     ctx->scontent_len *= 10;
                     ctx->scontent_len += *ch - '0';
@@ -617,8 +662,7 @@ reparse:
 
         case st_value_cr:
             if (*ch == LF) {
-                memcpy(ctx->sbuff+ctx->sbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->sbuff_len += sizeof("\r\n")-1;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 ctx->sstate = st_field;
             } else {
                 /* bad response */
@@ -629,8 +673,7 @@ reparse:
 
         case st_field_cr:
             if (*ch == LF) {
-                memcpy(ctx->sbuff+ctx->sbuff_len, "\r\n", sizeof("\r\n ")-1);
-                ctx->sbuff_len += sizeof("\r\n")-1;
+                ctx->buffer[ctx->buffer_len++] = LF;
                 if (ctx->scontent_len == 0) {
                     ctx->sstate = st_done;
                 } else {
@@ -644,7 +687,7 @@ reparse:
             break;
 
         case st_body:
-            ctx->sbuff[ctx->sbuff_len++] = *ch;
+            ctx->buffer[ctx->buffer_len++] = *ch;
             ctx->scontent_len--;
             if (ctx->scontent_len == 0) {
                 ctx->sstate = st_done;
@@ -657,9 +700,13 @@ reparse:
     }
 done:
 
+    if (n == 0) {
+        ctx->sstate = st_done;
+    }
+
     /* just forward it */
-    ctx->cwrite_ptr = ctx->sbuff;
-    ctx->cwrite_len = ctx->sbuff_len;
+    ctx->cwrite_ptr = ctx->buffer;
+    ctx->cwrite_len = ctx->buffer_len;
     write_to_client(ctx);
 }
 
@@ -750,12 +797,12 @@ invalid:
 }
 
 static void
-copy_path_to_cbuff(struct context *ctx)
+copy_path_to_buffer(struct context *ctx)
 {
     int i;
     size_t path_len = strlen(ctx->path);
     for (i = 0; i < path_len; i++) {
-        ctx->cbuff[ctx->cbuff_len++] = ctx->path[i];
+        ctx->buffer[ctx->buffer_len++] = ctx->path[i];
     }
 }
 
@@ -853,19 +900,19 @@ static void
 add_host_header(struct context *ctx)
 {
     size_t hostlen = strlen(ctx->host);
-    memcpy(ctx->cbuff+ctx->cbuff_len, "Host: ", sizeof("Host: ")-1);
-    ctx->cbuff_len += sizeof("Host: ")-1;
-    memcpy(ctx->cbuff+ctx->cbuff_len, ctx->host, hostlen);
-    ctx->cbuff_len += hostlen;
-    memcpy(ctx->cbuff+ctx->cbuff_len, "\r\n", sizeof("\r\n ")-1);
-    ctx->cbuff_len += sizeof("\r\n")-1;
+    memcpy(ctx->buffer+ctx->buffer_len, "Host: ", sizeof("Host: ")-1);
+    ctx->buffer_len += sizeof("Host: ")-1;
+    memcpy(ctx->buffer+ctx->buffer_len, ctx->host, hostlen);
+    ctx->buffer_len += hostlen;
+    memcpy(ctx->buffer+ctx->buffer_len, "\r\n", sizeof("\r\n ")-1);
+    ctx->buffer_len += sizeof("\r\n")-1;
 }
 
 static void
 add_connection_header(struct context *ctx)
 {
-    memcpy(ctx->cbuff+ctx->cbuff_len, "Connection: close\r\n", sizeof("Connection: close\r\n")-1);
-    ctx->cbuff_len += sizeof("Connection: close\r\n")-1;
+    memcpy(ctx->buffer+ctx->buffer_len, "Connection: close\r\n", sizeof("Connection: close\r\n")-1);
+    ctx->buffer_len += sizeof("Connection: close\r\n")-1;
 }
 
 static void
@@ -975,14 +1022,35 @@ write_to_client(struct context *ctx)
 }
 
 static void
-add_to_parse_buff(struct context *ctx, const uint8_t *ptr, const size_t len)
+add_to_pbuffer(struct context *ctx, const uint8_t *ptr, const size_t len)
 {
-    memcpy(ctx->parse_buff + ctx->parse_buff_len, ptr, len);
-    ctx->parse_buff_len += len;
+    memcpy(ctx->pbuffer + ctx->pbuffer_len, ptr, len);
+    ctx->pbuffer_len += len;
 }
 
 static void
-clear_parse_buff(struct context *ctx)
+clear_pbuffer(struct context *ctx)
 {
-    ctx->parse_buff_len = 0;
+    ctx->pbuffer_len = 0;
+}
+
+static void
+append_pbuffer_to_buffer(struct context *ctx)
+{
+    memcpy(ctx->buffer+ctx->buffer_len, ctx->pbuffer, ctx->pbuffer_len);
+    ctx->buffer_len += ctx->pbuffer_len;
+}
+
+static void
+pbuffer_to_field(struct context *ctx)
+{
+    memcpy(ctx->field, ctx->pbuffer, ctx->pbuffer_len);
+    ctx->field_len = ctx->pbuffer_len;
+}
+
+static void
+pbuffer_to_value(struct context *ctx)
+{
+    memcpy(ctx->value, ctx->pbuffer, ctx->pbuffer_len);
+    ctx->value_len = ctx->pbuffer_len;
 }

@@ -134,6 +134,6 @@ accept_callback(struct evconnlistener *listener, evutil_socket_t sock,
 
     context_set_base(ctx, base);
     context_set_client(ctx, sock, addr, len);
-    register_client_read_event(ctx);
+    context_start_process(ctx);
 }
 

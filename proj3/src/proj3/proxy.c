@@ -61,7 +61,7 @@ main(int argc, char *argv[])
     base = event_base_new();
     listener = evconnlistener_new(base, accept_callback, NULL,
                                   LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-                                  -1, listen_sock);
+                                  1000, listen_sock);
     event_base_dispatch(base);
     exit(EXIT_SUCCESS);
 }

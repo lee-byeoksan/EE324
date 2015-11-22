@@ -5,6 +5,7 @@
 #include "method_thread.h"
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <unistd.h>
 #include <strings.h>
 #include <sys/select.h>
 #include <time.h>

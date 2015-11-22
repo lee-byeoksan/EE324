@@ -6,6 +6,7 @@
 #include "lock_client.h"
 #include "rpc.h"
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <vector>
 
 int nt = 10;

@@ -2,6 +2,7 @@
 // generates print statements on failures, but eventually says "rpctest OK"
 
 #include "rpc.h"
+#include <unistd.h>
 #include <arpa/inet.h>
 
 rpcs *server;  // server rpc object

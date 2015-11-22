@@ -10,6 +10,7 @@
 
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <signal.h>
 #include <strings.h>
 #include <netinet/tcp.h>

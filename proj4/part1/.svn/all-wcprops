@@ -1,0 +1,119 @@
+K 25
+svn:wc:ra_dav:version-url
+V 51
+/svn/15-440/!svn/ver/194/projects/dfs/part1/handout
+END
+lock_demo.cc
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_demo.cc
+END
+marshall.h
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/marshall.h
+END
+method_thread.h
+K 25
+svn:wc:ra_dav:version-url
+V 65
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/method_thread.h
+END
+chan.cc
+K 25
+svn:wc:ra_dav:version-url
+V 59
+/svn/15-440/!svn/ver/194/projects/dfs/part1/handout/chan.cc
+END
+lock_protocol.h
+K 25
+svn:wc:ra_dav:version-url
+V 67
+/svn/15-440/!svn/ver/140/projects/dfs/part1/handout/lock_protocol.h
+END
+chan.h
+K 25
+svn:wc:ra_dav:version-url
+V 58
+/svn/15-440/!svn/ver/176/projects/dfs/part1/handout/chan.h
+END
+host.cc
+K 25
+svn:wc:ra_dav:version-url
+V 57
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/host.cc
+END
+lock_tester.cc
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_tester.cc
+END
+lock_server.cc
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_server.cc
+END
+lock_smain.cc
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_smain.cc
+END
+host.h
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/host.h
+END
+lock_server.h
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_server.h
+END
+rpc.cc
+K 25
+svn:wc:ra_dav:version-url
+V 58
+/svn/15-440/!svn/ver/176/projects/dfs/part1/handout/rpc.cc
+END
+rpctest.cc
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/svn/15-440/!svn/ver/194/projects/dfs/part1/handout/rpctest.cc
+END
+fifo.h
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/fifo.h
+END
+lock_client.cc
+K 25
+svn:wc:ra_dav:version-url
+V 64
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_client.cc
+END
+rpc.h
+K 25
+svn:wc:ra_dav:version-url
+V 57
+/svn/15-440/!svn/ver/101/projects/dfs/part1/handout/rpc.h
+END
+lock_client.h
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/svn/15-440/!svn/ver/6/projects/dfs/part1/handout/lock_client.h
+END
+Makefile
+K 25
+svn:wc:ra_dav:version-url
+V 60
+/svn/15-440/!svn/ver/163/projects/dfs/part1/handout/Makefile
+END

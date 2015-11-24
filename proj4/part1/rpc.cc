@@ -23,6 +23,10 @@ rpcc::rpcc(sockaddr_in _dst, bool _debug)
 
     // Create a thread that runs clock_loop to enable retransmissions
     // ** YOU FILL THIS IN FOR LAB 1 **
+    if ((th_clock_loop = method_thread(this, false, &rpcc::clock_loop)) == 0) {
+        perror("rpcc::rpcc pthread_create");
+        exit(1);
+    }
 
     if((th_chan_loop = method_thread(this, false, &rpcc::chan_loop)) == 0){
         perror("rpcc::rpcc pthread_create");
@@ -409,7 +413,7 @@ rpcc::update_xid_rep(unsigned int xid)
     }
 
     for (it = xid_rep_window.begin(); it != xid_rep_window.end(); it++) {
-        if (*it > xid) {
+        if ((*it) > xid) {
             xid_rep_window.insert(it, xid);
             goto compress;
         }
@@ -621,6 +625,25 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
     // remember the reply for this xid.
     // ** YOU FILL THIS IN FOR LAB 1 **
 
+    /*
+     * Ensure that reply_window[clt_nonce] and corresponding
+     * reply have been created in checkduplicate_and_update().
+     */
+    std::list<reply_t *> &reply_list = reply_window[clt_nonce];
+    reply_t *reply = NULL;
+
+    std::list<reply_t *>::iterator it;
+    for (it = reply_list.begin(); it != reply_list.end(); it++) {
+        if ((*it)->xid == xid) {
+            reply = *it;
+            break;
+        }
+    }
+    assert(reply != NULL);
+
+    reply->rep = rep;
+    reply->rep_present = true;
+
     assert(pthread_mutex_unlock(&reply_window_m) == 0);
 }
 
@@ -648,12 +671,68 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce,
     rpcstate_t r = NEW;
 
     assert(pthread_mutex_lock(&reply_window_m) == 0);
-
     // check if xid is a duplicate, and if not update list of received xid, so
     // that checking and update is atomic.
     // fill in xid_rep if we have the reply (state is DONE)
 
     // ** YOU FILL THIS IN FOR LAB 1 **
+
+    reply_t *reply = NULL;
+    std::list<reply_t *>::iterator it;
+    /* reply_list always keep latest acked reply at its head */
+    if (reply_window.count(clt_nonce) == 0) {
+        /* Note that client xid always starts from 1 */
+        std::list<reply_t *> new_reply_list = std::list<reply_t *>();
+        reply = new reply_t(0);
+        reply->rep_present = true;
+        new_reply_list.push_front(reply);
+        reply_window[clt_nonce] = new_reply_list;
+    }
+
+    reply = NULL;
+    std::list<reply_t *> &reply_list = reply_window[clt_nonce];
+    for (it = reply_list.begin(); it != reply_list.end(); it++) {
+        if ((*it)->xid == xid) {
+            reply = *it;
+            break;
+        }
+    }
+
+    /* We have reply in reply list. DONE or IN PROGRESS */
+    if (reply != NULL) {
+        if (reply->rep_present) {
+            rep = reply->rep;
+            r = DONE;
+        } else {
+            r = INPROGRESS;
+        }
+        goto finish;
+    }
+
+    if (!reply_list.empty() && xid < reply_list.front()->xid) {
+        r = FORGOTTEN;
+        goto finish;
+    }
+
+    reply = new reply_t(xid);
+    r = NEW;
+    /* Keep the reply list sorted in xid ascending order */
+    for (it = reply_list.begin(); it != reply_list.end(); it++) {
+        if ((*it)->xid > xid) {
+            reply_list.insert(it, reply);
+            goto finish;
+        }
+    }
+    reply_list.push_back(reply);
+
+finish:
+    /* Update the list. We don't have to keep the replies which was acked. */
+    /* Note that the list cannot be empty because of new request. */
+    while (!reply_list.empty() && reply_list.front()->xid < xid_rep) {
+        reply = reply_list.front();
+        delete reply;
+        reply_list.pop_front();
+    }
 
     assert(pthread_mutex_unlock(&reply_window_m) == 0);
     return r;

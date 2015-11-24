@@ -18,10 +18,10 @@ lock_client::lock_client(std::string dst)
     }
 }
 
-int
+lock_protocol::status
 lock_client::stat(lock_protocol::lockid_t lid)
 {
-    int r;
+    lock_protocol::status r;
     int ret = cl->call(lock_protocol::stat, cl->id(), lid, r);
     assert (ret == lock_protocol::OK);
     return r;
@@ -30,10 +30,18 @@ lock_client::stat(lock_protocol::lockid_t lid)
 lock_protocol::status
 lock_client::acquire(lock_protocol::lockid_t lid)
 {
+    lock_protocol::status r;
+    int ret = cl->call(lock_protocol::acquire, lid, r);
+    assert (ret == lock_protocol::OK);
+    return r;
 }
 
 lock_protocol::status
 lock_client::release(lock_protocol::lockid_t lid)
 {
+    lock_protocol::status r;
+    int ret = cl->call(lock_protocol::release, lid, r);
+    assert (ret == lock_protocol::OK);
+    return r;
 }
 

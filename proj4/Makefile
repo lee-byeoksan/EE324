@@ -1,38 +1,61 @@
-CXXFLAGS =  -g -MD -Wall -D_FILE_OFFSET_BITS=64
+CXXFLAGS =  -g -Wall -D_FILE_OFFSET_BITS=64
 FUSEFLAGS= -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=25 -I/usr/local/include/fuse -I/usr/include/fuse
 LDFLAGS = -L. -L/usr/local/lib
-LDLIBS = -lrpc -lfuse -lpthread
-CC = g++
+LDLIBS = -lfuse -lpthread -pthread 
+RPCSTUFF = rpc.o chan.o host.o
 
-all: lab1
+all: rpctest lock_server lock_tester lock_demo yfs_client extent_server
 
-lab1: librpc.a rpctest lock_server lock_tester lock_demo
+rpctest: rpctest.o ${RPCSTUFF}
+	g++ ${LDLIBS} rpctest.o ${RPCSTUFF} -o rpctest
 
-hfiles1=fifo.h chan.h host.h rpc.h marshall.h method_thread.h lock_protocol.h\
-	 lock_server.h lock_client.h
-hfiles2=yfs_client.h extent_client.h extent_protocol.h extent_server.h
+lock_demo: lock_demo.o lock_client.o ${RPCSTUFF}
+	g++ ${LDLIBS} lock_demo.o lock_client.o ${RPCSTUFF} -o lock_demo
 
-rpclib=rpc.cc host.cc chan.cc
+lock_tester: lock_tester.o lock_client.o ${RPCSTUFF}
+	g++ ${LDLIBS} lock_tester.o lock_client.o ${RPCSTUFF} -o lock_tester
 
-librpc.a: $(patsubst %.cc,%.o,$(rpclib))
-	rm -f $@
-	ar cq $@ $^
-	ranlib librpc.a
+lock_server: lock_server.o lock_smain.o ${RPCSTUFF}
+	g++ ${LDLIBS} lock_server.o lock_smain.o ${RPCSTUFF} -o lock_server
 
-rpctest: rpctest.o
+yfs_client: yfs_client.o extent_client.o fuse.o lock_client.o ${RPCSTUFF} 
+	g++ yfs_client.o extent_client.o fuse.o lock_client.o ${RPCSTUFF} -o yfs_client ${LDLIBS} 
 
-lock_demo: lock_demo.o lock_client.o
-
-lock_tester: lock_tester.o lock_client.o
-
-lock_server: lock_server.o lock_smain.o
-
-yfs_client: yfs_client.o extent_client.o fuse.o lock_client.o
-
-extent_server: extent_server.o extent_smain.o
+extent_server: extent_server.o extent_smain.o ${RPCSTUFF}
+	g++ extent_server.o extent_smain.o ${RPCSTUFF} -o extent_server ${LDLIBS} 
 
 fuse.o: fuse.cc
-	$(CXX) -c $(CXXFLAGS) $(FUSEFLAGS) $(MACFLAGS) $<
+	g++ -c ${CXXFLAGS} ${FUSEFLAGS} fuse.cc
 
-clean : 
-	rm -rf *.o *.d librpc.a yfs_client extent_server lock_server lock_tester lock_demo rpctest 
+host.o: host.cc
+	g++ -c ${CXXFLAGS} host.cc
+
+chan.o: chan.cc
+	g++ -c ${CXXFLAGS} chan.cc
+
+rpc.o: rpc.cc chan.cc
+	g++ -c ${CXXFLAGS} rpc.cc chan.cc
+
+rpctest.o: rpctest.cc
+	g++ -c ${CXXFLAGS} rpctest.cc
+
+lock_demo.o: lock_demo.cc
+	g++ -c ${CXXFLAGS} lock_demo.cc
+
+lock_tester.o: lock_tester.cc
+	g++ -c ${CXXFLAGS} lock_tester.cc
+
+lock_client.o: lock_client.cc rpc.cc
+	g++ -c ${CXXFLAGS} lock_client.cc rpc.cc
+
+lock_server.o: lock_server.cc
+	g++ -c ${CXXFLAGS} lock_server.cc
+
+yfs_client.o: yfs_client.cc
+	g++ -c ${CXXFLAGS} ${FUSEFLAGS} yfs_client.cc
+
+extent_server.o: extent_server.cc
+	g++ -c ${CXXFLAGS} extent_server.cc
+
+clean: 
+	rm -rf *.o yfs_client extent_server lock_server lock_tester lock_demo rpctest 

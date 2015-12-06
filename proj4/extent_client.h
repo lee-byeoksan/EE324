@@ -20,6 +20,8 @@ class extent_client {
 				  extent_protocol::attr &a);
   extent_protocol::status put(extent_protocol::extentid_t eid, std::string buf);
   extent_protocol::status remove(extent_protocol::extentid_t eid);
+  extent_protocol::status create(extent_protocol::extentid_t parent, std::string name, extent_protocol::extentid_t &ino);
+  extent_protocol::status lookup(extent_protocol::extentid_t parent, std::string name, extent_protocol::extentid_t &ino);
 };
 
 #endif 

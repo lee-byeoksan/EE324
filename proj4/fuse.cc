@@ -60,6 +60,7 @@ getattr(yfs_client::inum inum, struct stat &st)
         st.st_ctime = info.ctime;
         printf("   getattr -> %lu %lu %lu\n", info.atime, info.mtime, info.ctime);
     }
+
     return yfs_client::OK;
 }
 
@@ -68,6 +69,7 @@ void
 fuseserver_getattr(fuse_req_t req, fuse_ino_t ino,
         struct fuse_file_info *fi)
 {
+    printf("fuseserver_getattr()\n");
     struct stat st;
     yfs_client::inum inum = ino; // req->in.h.nodeid;
     yfs_client::status ret;
@@ -107,6 +109,7 @@ void
 fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size,
         off_t off, struct fuse_file_info *fi)
 {
+    printf("fuseserver_read()\n");
     /*IMPLEMENT THIS FUNCTION FOR LAB 3*/
 
     // You fill this in
@@ -122,6 +125,7 @@ fuseserver_write(fuse_req_t req, fuse_ino_t ino,
         const char *buf, size_t size, off_t off,
         struct fuse_file_info *fi)
 {
+    printf("fuseserver_write()\n");
     /*IMPLEMENT THIS FUNCTION FOR LAB 3*/
 
     // You fill this in 
@@ -148,17 +152,35 @@ fuseserver_createhelper(fuse_ino_t parent, const char *name,
        which would use mkdir().  You may safely ignore the "mode"
        parameter. */
 
+    printf("fuseserver_createhelper()\n");
+    yfs_client::status ret;
+    yfs_client::inum ino;
+    std::string filename(name);
+    ret = yfs->create((yfs_client::inum)parent, filename, ino);
+    if (ret != yfs_client::OK) {
+        return ret;
+    }
+
+    ret = getattr(ino, e->attr);
+    if (ret != yfs_client::OK) {
+        return ret;
+    }
 
     // Fill in e before returning.
     // You may choose 0 for the generation number and timeout entries
+    e->ino = ino;
+    e->generation = 0;
+    e->attr_timeout = 0;
+    e->entry_timeout = 0;
 
-    return yfs_client::NOENT;
+    return yfs_client::OK;
 }
 
 void
 fuseserver_create(fuse_req_t req, fuse_ino_t parent, const char *name,
         mode_t mode, struct fuse_file_info *fi)
 {
+    printf("fuseserver_create()\n");
     struct fuse_entry_param e;
     if( fuseserver_createhelper( parent, name, mode, &e ) == yfs_client::OK ) {
         fuse_reply_create(req, &e, fi);
@@ -171,6 +193,7 @@ void
 fuseserver_mknod( fuse_req_t req, fuse_ino_t parent, 
         const char *name, mode_t mode, dev_t rdev )
 {
+    printf("fuseserver_mknod()\n");
     struct fuse_entry_param e;
     if( fuseserver_createhelper( parent, name, mode, &e ) == yfs_client::OK ) {
         fuse_reply_entry(req, &e);
@@ -183,12 +206,29 @@ void
 fuseserver_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
     /*IMPLEMENT THIS FUNCTION FOR LAB 2*/
-
+    printf("fuseserver_lookup() [parent=%d, name=%s]\n", parent, name);
     struct fuse_entry_param e;
     bool found = false;
+    yfs_client::status ret;
 
+    extent_protocol::extentid_t ino;
+    std::string filename(name);
+    ret = yfs->lookup(parent, filename, ino);
+    if (ret != yfs_client::OK) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    ret = getattr(ino, e.attr);
+    if (ret != yfs_client::OK) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    e.ino = ino;
     e.attr_timeout = 0.0;
     e.entry_timeout = 0.0;
+    found = true;
 
     // You fill this in:
     // Look up the file named `name' in the directory referred to by
@@ -237,11 +277,11 @@ fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 {
     /*IMPLEMENT THIS FUNCTION FOR LAB 2*/
 
+    printf("fuseserver_readdir()\n");
     yfs_client::inum inum = ino; // req->in.h.nodeid;
     struct dirbuf b;
     yfs_client::dirent e;
 
-    printf("fuseserver_readdir\n");
 
     if(!yfs->isdir(inum)){
         fuse_reply_err(req, ENOTDIR);
@@ -252,6 +292,25 @@ fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 
 
     // fill in the b data structure using dirbuf_add
+    yfs_client::status ret;
+    std::string dir;
+    ret = yfs->get(ino, dir);
+    if (ret != yfs_client::OK) {
+        reply_buf_limited(req, b.p, b.size, off, size);
+        free(b.p);
+        return;
+    }
+
+    int i, n;
+    std::stringstream ss(dir);
+    ss >> n;
+    for (i = 0; i < n; i++) {
+        yfs_client::inum inum;
+        std::string name;
+        ss >> inum;
+        ss >> name;
+        dirbuf_add(&b, name.c_str(), inum);
+    }
 
 
     reply_buf_limited(req, b.p, b.size, off, size);
@@ -264,8 +323,10 @@ fuseserver_open(fuse_req_t req, fuse_ino_t ino,
         struct fuse_file_info *fi)
 {
     /*IMPLEMENT THIS FUNCTION FOR LAB 3*/
+    printf("fuseserver_open()\n");
 
     // You fill this in
+    printf("fuse open\n");
 #if 0
     fuse_reply_open(req, fi);
 #else
@@ -277,6 +338,7 @@ void
 fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
         mode_t mode)
 {
+    printf("fuseserver_mkdir()\n");
     /*IMPLEMENT THIS FUNCTION FOR LAB 4*/
 
     struct fuse_entry_param e;
@@ -292,6 +354,7 @@ fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
 void
 fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
+    printf("fuseserver_unlink()\n");
     /*IMPLEMENT THIS FUNCTION FOR LAB 4*/
 
     // You fill this in
@@ -303,9 +366,8 @@ fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
 void
 fuseserver_statfs(fuse_req_t req)
 {
+    printf("fuseserver_statfs()\n");
     struct statvfs buf;
-
-    printf("statfs\n");
 
     memset(&buf, 0, sizeof(buf));
 

@@ -10,19 +10,20 @@
 using namespace std;
 
 class extent_server {
+public:
+    extent_server();
+    // You must store file attributes in this map
+    std::map<extent_protocol::extentid_t, extent_protocol::attr> attrmap;
 
- public:
-  extent_server();
-  // You must store file attributes in this map
-  std::map<extent_protocol::extentid_t, extent_protocol::attr> attrmap;
+    // You may store file contents in this map
+    std::map<extent_protocol::extentid_t, std::string> contmap;
 
-  // You may store file contents in this map
-  std::map<extent_protocol::extentid_t, std::string> contmap;
-
-  int put(extent_protocol::extentid_t id, std::string, int &);
-  int get(extent_protocol::extentid_t id, std::string &);
-  int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
-  int remove(extent_protocol::extentid_t id, int &);
+    int put(extent_protocol::extentid_t id, std::string, int &);
+    int get(extent_protocol::extentid_t id, std::string &);
+    int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
+    int remove(extent_protocol::extentid_t id, int &);
+    int create(extent_protocol::extentid_t parent, std::string filename, extent_protocol::extentid_t &ino);
+    int lookup(extent_protocol::extentid_t parent, std::string filename, extent_protocol::extentid_t &ino);
 };
 
 #endif 

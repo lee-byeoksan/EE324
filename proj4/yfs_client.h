@@ -7,43 +7,47 @@
 #include <vector>
 
 
-  class yfs_client {
-  extent_client *ec;
- public:
+class yfs_client {
+    extent_client *ec;
+public:
 
-  typedef unsigned long long inum;
-  enum xxstatus { OK, RPCERR, NOENT, IOERR, FBIG };
-  typedef int status;
+    typedef unsigned long long inum;
+    enum xxstatus { OK, RPCERR, NOENT, IOERR, FBIG };
+    typedef int status;
 
-  struct fileinfo {
-    unsigned long long size;
-    unsigned long atime;
-    unsigned long mtime;
-    unsigned long ctime;
-  };
-  struct dirinfo {
-    unsigned long atime;
-    unsigned long mtime;
-    unsigned long ctime;
-  };
-  struct dirent {
-    std::string name;
-    unsigned long long inum;
-  };
+    struct fileinfo {
+        unsigned long long size;
+        unsigned long atime;
+        unsigned long mtime;
+        unsigned long ctime;
+    };
+    struct dirinfo {
+        unsigned long atime;
+        unsigned long mtime;
+        unsigned long ctime;
+    };
+    struct dirent {
+        std::string name;
+        unsigned long long inum;
+    };
 
- private:
-  static std::string filename(inum);
-  static inum n2i(std::string);
- public:
+private:
+    static std::string filename(inum);
+    static inum n2i(std::string);
+public:
 
-  yfs_client(std::string, std::string);
+    yfs_client(std::string, std::string);
 
-  bool isfile(inum);
-  bool isdir(inum);
-  inum ilookup(inum di, std::string name);
+    bool isfile(inum);
+    bool isdir(inum);
+    inum ilookup(inum di, std::string name);
 
-  int getfile(inum, fileinfo &);
-  int getdir(inum, dirinfo &);
+    int getfile(inum, fileinfo &);
+    int getdir(inum, dirinfo &);
+
+    int get(inum, std::string &);
+    int create(inum, std::string, inum &);
+    int lookup(inum, std::string, inum &);
 };
 
 #endif 

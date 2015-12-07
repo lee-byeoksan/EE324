@@ -866,6 +866,13 @@ operator<<(marshall &m, unsigned long long x)
     return m;
 }
 
+marshall &
+operator<<(marshall &m, long long x)
+{
+    m << (unsigned long long)x;
+    return m;
+}
+
 bool
 unmarshall::okdone()
 {
@@ -958,6 +965,15 @@ operator>>(unmarshall &u, unsigned long long &x)
     u >> a;
     u >> b;
     x = a | ((unsigned long long) b << 32);
+    return u;
+}
+
+unmarshall &
+operator>>(unmarshall &u, long long &x)
+{
+    unsigned long long y;
+    u >> y;
+    x = (long long)y;
     return u;
 }
 

@@ -24,6 +24,9 @@ public:
     int remove(extent_protocol::extentid_t id, int &);
     int create(extent_protocol::extentid_t parent, std::string filename, extent_protocol::extentid_t &ino);
     int lookup(extent_protocol::extentid_t parent, std::string filename, extent_protocol::extentid_t &ino);
+    int setattr(extent_protocol::extentid_t id, extent_protocol::attr &);
+    int read(extent_protocol::extentid_t id, off_t off, size_t size, std::string &);
+    int write(extent_protocol::extentid_t id, off_t off, size_t size, std::string , int &);
 };
 
 #endif 

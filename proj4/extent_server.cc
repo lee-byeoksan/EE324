@@ -127,6 +127,7 @@ int extent_server::create(extent_protocol::extentid_t parent, std::string filena
     extent_protocol::attr attr;
     std::string cont = "";
     pattr.atime = pattr.mtime = attr.atime = attr.ctime = attr.mtime = time(NULL);
+    pattr.size = nss.str().length();
     attr.size = 0;
 
     attrmap[parent] = pattr;
@@ -179,5 +180,80 @@ int extent_server::lookup(extent_protocol::extentid_t parent, std::string filena
 
     ino = id;
     printf("file has been found\n");
+    return extent_protocol::OK;
+}
+
+int extent_server::setattr(extent_protocol::extentid_t id, extent_protocol::attr &a)
+{
+    printf("setattr %d\n", id);
+    if (attrmap.find(id) == attrmap.end()) {
+        return extent_protocol::NOENT;
+    }
+
+    extent_protocol::attr attr = attrmap[id];
+    std::string file = contmap[id];
+
+    if (attr.size > a.size) {
+        /* truncate */
+        file.erase(a.size, attr.size - a.size);
+    } else if (attr.size < a.size) {
+        /* padding */
+        file.append(a.size - attr.size, '\0');
+    }
+
+    attr.size = file.length();
+    attr.atime = time(NULL);
+    attrmap[id] = attr;
+    contmap[id] = file;
+
+    a = attr;
+    return extent_protocol::OK;
+}
+
+int extent_server::read(extent_protocol::extentid_t id, off_t off, size_t size, std::string &buf)
+{
+    printf("read from %d\n", id);
+    if (attrmap.find(id) == attrmap.end()) {
+        return extent_protocol::NOENT;
+    }
+
+    extent_protocol::attr attr = attrmap[id];
+    std::string file = contmap[id];
+
+    attr.atime = time(NULL);
+    if (off >= file.length()) {
+        buf = "";
+    } else {
+        size = (off + size > file.length()) ? file.length() - off : size;
+        buf = file.substr(off, size);
+    }
+
+    attrmap[id] = attr;
+
+    return extent_protocol::OK;
+}
+
+int extent_server::write(extent_protocol::extentid_t id, off_t off, size_t size, std::string buf, int &nwritten)
+{
+    printf("write to %d\n", id);
+    if (attrmap.find(id) == attrmap.end()) {
+        return extent_protocol::NOENT;
+    }
+
+    extent_protocol::attr attr = attrmap[id];
+    std::string file = contmap[id];
+    attr.atime = time(NULL);
+
+    if (file.length() < off + size) {
+        file.append(off + size - file.length(), '\0');
+    }
+
+    file.replace(off, size, buf, 0, size);
+    attr.size = file.length();
+    attrmap[id] = attr;
+    contmap[id] = file;
+
+    nwritten = size;
+
     return extent_protocol::OK;
 }

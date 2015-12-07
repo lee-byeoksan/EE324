@@ -57,18 +57,30 @@ extent_client::remove(extent_protocol::extentid_t eid)
 extent_protocol::status
 extent_client::create(extent_protocol::extentid_t parent, std::string name, extent_protocol::extentid_t &ino)
 {
-    extent_protocol::status ret = extent_protocol::OK;
-    int r;
-    ret = cl->call(extent_protocol::create, parent, name, ino);
-    return ret;
+    return cl->call(extent_protocol::create, parent, name, ino);
 }
 
 extent_protocol::status
 extent_client::lookup(extent_protocol::extentid_t parent, std::string name, extent_protocol::extentid_t &ino)
 {
-    extent_protocol::status ret = extent_protocol::OK;
-    int r;
-    ret = cl->call(extent_protocol::lookup, parent, name, ino);
-    return ret;
+    return cl->call(extent_protocol::lookup, parent, name, ino);
 }
 
+
+extent_protocol::status
+extent_client::setattr(extent_protocol::extentid_t eid, extent_protocol::attr &a)
+{
+    return cl->call(extent_protocol::setattr, eid, a);
+}
+
+extent_protocol::status
+extent_client::read(extent_protocol::extentid_t eid, off_t off, size_t size, std::string &buf)
+{
+    return cl->call(extent_protocol::read, eid, off, size, buf);
+}
+
+extent_protocol::status
+extent_client::write(extent_protocol::extentid_t eid, off_t off, size_t size, std::string buf, int &nwritten)
+{
+    return cl->call(extent_protocol::write, eid, off, size, buf, nwritten);
+}

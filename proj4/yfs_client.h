@@ -48,6 +48,9 @@ public:
     int get(inum, std::string &);
     int create(inum, std::string, inum &);
     int lookup(inum, std::string, inum &);
+    int setfile(inum inum, off_t size);
+    int read(inum, off_t, size_t, std::string &);
+    int write(inum, off_t, size_t, std::string, int &);
 };
 
 #endif 

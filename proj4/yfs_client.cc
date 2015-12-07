@@ -123,3 +123,39 @@ yfs_client::lookup(inum parent, std::string name, inum &ino)
 
     return OK;
 }
+
+int
+yfs_client::setfile(inum inum, off_t size)
+{
+    printf("setfile %016llx to %lld\n", inum, size);
+    extent_protocol::attr a;
+    a.size = size;
+    a.atime = a.mtime = a.ctime = 0;
+    if (ec->setattr(inum, a) != extent_protocol::OK) {
+        return IOERR;
+    }
+
+    return OK;
+}
+
+int
+yfs_client::read(inum inum, off_t off, size_t size, std::string &buf)
+{
+    printf("read %016llx at %lld\n", inum, off);
+    if (ec->read(inum, off, size, buf) != extent_protocol::OK) {
+        return IOERR;
+    }
+
+    return OK;
+}
+
+int
+yfs_client::write(inum inum, off_t off, size_t size, std::string buf, int &nwritten)
+{
+    printf("write %016llx at %lld\n", inum, off);
+    if (ec->write(inum, off, size, buf, nwritten) != extent_protocol::OK) {
+        return IOERR;
+    }
+
+    return OK;
+}

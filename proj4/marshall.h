@@ -35,6 +35,8 @@ marshall& operator<<(marshall &, unsigned short);
 marshall& operator<<(marshall &, short);
 marshall& operator<<(marshall &, unsigned long long);
 marshall& operator<<(marshall &, const std::string &);
+marshall& operator<<(marshall &, long long);
+marshall& operator<<(marshall &, unsigned long long);
 
 // i32() &c do not directly signal an error.
 // call ok() to check that all calls succeeded.
@@ -63,6 +65,8 @@ unmarshall& operator>>(unmarshall &, unsigned long &);
 unmarshall& operator>>(unmarshall &, int &);
 unmarshall& operator>>(unmarshall &, unsigned long long &);
 unmarshall& operator>>(unmarshall &, std::string &);
+unmarshall& operator>>(unmarshall &, long long &);
+unmarshall& operator>>(unmarshall &, unsigned long long &);
 
 template <class C> marshall &
 operator<<(marshall &m, std::vector<C> v)

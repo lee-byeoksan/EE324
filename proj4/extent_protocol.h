@@ -17,6 +17,9 @@ public:
         remove,
         create,
         lookup,
+        setattr,
+        read,
+        write,
     };
     static const unsigned int maxextent = 8192*1000;
 

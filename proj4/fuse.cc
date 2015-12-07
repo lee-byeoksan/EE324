@@ -94,12 +94,11 @@ fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set
 
         // You fill this in
         // Don't forget to fill in st with the file's new attributes!
-
-#if 0
-        fuse_reply_attr(req, &st, 0);
-#else
-        fuse_reply_err(req, ENOSYS);
-#endif
+        if (yfs->setfile(ino, attr->st_size) == yfs_client::OK && getattr(ino, st) == yfs_client::OK) {
+            fuse_reply_attr(req, &st, 0);
+        } else {
+            fuse_reply_err(req, ENOENT);
+        }
     } else {
         fuse_reply_err(req, ENOSYS);
     }
@@ -113,11 +112,12 @@ fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     /*IMPLEMENT THIS FUNCTION FOR LAB 3*/
 
     // You fill this in
-#if 0
-    fuse_reply_buf(req, buf, size);
-#else
-    fuse_reply_err(req, ENOSYS);
-#endif
+    std::string buf;
+    if (yfs->read(ino, off, size, buf) != yfs_client::OK) {
+        fuse_reply_err(req, ENOSYS);
+    } else {
+        fuse_reply_buf(req, buf.c_str(), buf.length());
+    }
 }
 
 void
@@ -135,12 +135,13 @@ fuseserver_write(fuse_req_t req, fuse_ino_t ino,
     // Make sure to return the number of actual bytes written at 
     // the extent server.
 
-
-#if 0
-    fuse_reply_write(req, bytes_written);
-#else
-    fuse_reply_err(req, ENOSYS);
-#endif
+    std::string s(buf);
+    int nwritten;
+    if (yfs->write(ino, off, size, s, nwritten) != yfs_client::OK) {
+        fuse_reply_err(req, ENOSYS);
+    } else {
+        fuse_reply_write(req, nwritten);
+    }
 }
 
 yfs_client::status
@@ -326,12 +327,12 @@ fuseserver_open(fuse_req_t req, fuse_ino_t ino,
     printf("fuseserver_open()\n");
 
     // You fill this in
-    printf("fuse open\n");
-#if 0
-    fuse_reply_open(req, fi);
-#else
-    fuse_reply_err(req, ENOSYS);
-#endif
+    struct stat stat;
+    if (getattr(ino, stat) == yfs_client::OK) {
+        fuse_reply_open(req, fi);
+    } else {
+        fuse_reply_err(req, ENOSYS);
+    }
 }
 
 void
@@ -408,10 +409,10 @@ main(int argc, char *argv[])
     fuseserver_oper.mknod      = fuseserver_mknod;
 
     /* Uncomment these 4 lines for LAB 3 */
-    //fuseserver_oper.open       = fuseserver_open;
-    //fuseserver_oper.read       = fuseserver_read;
-    //fuseserver_oper.write      = fuseserver_write;
-    //fuseserver_oper.setattr    = fuseserver_setattr;
+    fuseserver_oper.open       = fuseserver_open;
+    fuseserver_oper.read       = fuseserver_read;
+    fuseserver_oper.write      = fuseserver_write;
+    fuseserver_oper.setattr    = fuseserver_setattr;
 
     /* Uncomment these 4 lines for LAB 4 */
     //fuseserver_oper.unlink     = fuseserver_unlink;

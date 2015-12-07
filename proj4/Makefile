@@ -1,7 +1,7 @@
 CXXFLAGS =  -g -Wall -D_FILE_OFFSET_BITS=64
 FUSEFLAGS= -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=25 -I/usr/local/include/fuse -I/usr/include/fuse
 LDFLAGS = -L. -L/usr/local/lib
-LDLIBS = -lfuse -lpthread -pthread 
+LDLIBS = -lfuse -lpthread -pthread
 RPCSTUFF = rpc.o chan.o host.o
 
 all: rpctest lock_server lock_tester lock_demo yfs_client extent_server
@@ -19,10 +19,10 @@ lock_server: lock_server.o lock_smain.o ${RPCSTUFF}
 	g++ ${LDLIBS} lock_server.o lock_smain.o ${RPCSTUFF} -o lock_server
 
 yfs_client: yfs_client.o extent_client.o fuse.o lock_client.o ${RPCSTUFF} 
-	g++ yfs_client.o extent_client.o fuse.o lock_client.o ${RPCSTUFF} -o yfs_client ${LDLIBS} 
+	g++ yfs_client.o extent_client.o fuse.o lock_client.o ${RPCSTUFF} -o yfs_client ${LDLIBS}
 
 extent_server: extent_server.o extent_smain.o ${RPCSTUFF}
-	g++ extent_server.o extent_smain.o ${RPCSTUFF} -o extent_server ${LDLIBS} 
+	g++ extent_server.o extent_smain.o ${RPCSTUFF} -o extent_server ${LDLIBS}
 
 fuse.o: fuse.cc
 	g++ -c ${CXXFLAGS} ${FUSEFLAGS} fuse.cc
